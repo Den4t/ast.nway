@@ -1,0 +1,147 @@
+#!/usr/bin/env php
+<?php
+
+	require_once "/var/lib/asterisk/agi-bin/phpagi.php";
+	//require_once "phpagi-asmanager.php";
+
+	/* Usage:
+	 *
+	 * AGI(nway.agi,action,CALLER|CALLE])
+	 *
+	 * ARG1: action
+	 *
+	 */
+
+
+	$agi = new AGI();
+
+	debug("===IN AGI argv[1]=$argv[1]", 1);
+	$ret=$agi->exec('DumpChan');
+	debug($ret['data']);
+
+	// get manager credentials out of the channel
+	//
+	$ampmgruser   = get_var( "AMPMGRUSER" );
+	$ampmgrpass   = get_var( "AMPMGRPASS" );
+	$channel      = get_var( "CHANNEL" );
+	$bridgepeer   = get_var( "BRIDGEPEER" );
+	$exttocall    = get_var( "EXTTOCALL" );
+	$ampuser      = get_var( "AMPUSER" );
+	$who	      = get_var( "DYNAMIC_WHO_ACTIVATED" );
+	$confno	      = get_var( "CONFNO" );
+
+//DYNAMIC_WHO_ACTIVATED=SIP/84957483333-0000005f
+
+	if(!isset($confno) || $confno == '') {
+		$confno='';
+		/*
+		if(isset($ampuser) && $ampuser != '') {
+			$confno=$ampuser;
+		} else {
+			$confno=$exttocall;
+		}
+		*/
+		debug("=== who=$who");
+		if(preg_match('/^[^\/]+\/([^\-]+)-/',$who,$arr)) {
+			$id=$arr[1];
+			debug("=== id=$id");
+			$ret=$agi->database_get('DEVICE',"$id/user");
+			if(isset($ret['data']) && !empty($ret['data'])) {
+				$confno=trim($ret['data']);
+			}
+		}
+
+		if($confno == '') exit(0);
+	}
+
+	debug("=== confno=$confno BRIDGEPEER=$bridgepeer");
+
+	$astman = new AGI_AsteriskManager( );
+
+	//$ampmgruser='admin';
+	//$ampmgrpass='756dd26c39abae6cfa5cd47e5f7515d8';
+	if (!$astman->connect(!empty($astmgrhost) ? $astmgrhost : "127.0.0.1", $ampmgruser , $ampmgrpass)) {
+		exit (1);
+	}
+
+	$action = get_action();
+
+/*
+$action = $ami->action({
+    Action => 'Redirect',
+    Channel => $channel,
+    Context => 'nway-invite',
+    Exten => $confno,
+    Priority => 1,
+    ExtraChannel => $bridgepeer,
+    ExtraContext => 'dynamic-nway-conf',
+    ExtraExten => $confno,
+    ExtraPriority => 1
+     });
+*/
+
+
+	//debug("===RET=$ret", 1);
+	switch ($action) {
+		case 'start':
+			$req=array(
+				'Channel' => $channel,
+				'Context' => 'nway-invite',
+				'Exten' => $confno,
+				'Priority' => 1,
+				'ExtraChannel' => $bridgepeer,
+				'ExtraContext' => 'dynamic-nway-conf',
+				'ExtraExten' => $confno,
+				'ExtraPriority' => 1
+			);
+			$ret=$astman->send_request('Redirect',$req);
+		break;
+		case 'ok':
+			$req=array(
+				'Channel' => $channel,
+				'Context' => 'nway-ok',
+				'Exten' => $confno,
+				'Priority' => 1,
+				'ExtraChannel' => $bridgepeer,
+				'ExtraContext' => 'dynamic-nway-conf',
+				'ExtraExten' => $confno,
+				'ExtraPriority' => 1
+			);
+			$ret=$astman->send_request('Redirect',$req);
+		break;
+		case 'kickall':
+			$ret=$astman->Command("confbridge kick $confno all");
+		break;
+		default:
+			debug("Got unknown action: $action, exiting");
+	}
+
+
+	exit(0);
+
+
+	// Get the requested action
+	//
+	function get_action() {
+ 		global $argv;
+		return strtolower(trim($argv['1']));
+	}
+
+	// Get a channel variable
+	//
+	function get_var($value) {
+		global $agi;
+
+		$r = $agi->get_variable( $value );
+		if ($r['result'] == 1) {
+			$result = $r['data'];
+			return trim($result);
+		}
+		return '';
+	}
+
+	function debug($string, $level=3) {
+		global $agi;
+		$agi->verbose($string, $level);
+	}
+?>
